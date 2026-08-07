@@ -15,7 +15,7 @@ The `google_takeout_articles` DAG runs daily at 03:00 America/Los_Angeles and ca
 ## Start and operate Airflow
 
 ```bash
-cd /Users/avery/build/mdx-articles/content
+cd /path/to/Airflow-AI_Search-to-Blog-Article-Pipeline
 docker compose -f airflow/compose.yaml up -d --build
 docker compose -f airflow/compose.yaml exec airflow-scheduler airflow dags list-import-errors
 ```
