@@ -1,0 +1,3 @@
+[submodule "takeout_downloader_script"]
+	path = takeout_downloader_script
+	url = https://github.com/clivewatts/takeout_downloader_script.git

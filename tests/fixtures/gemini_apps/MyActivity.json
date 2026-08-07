@@ -1,0 +1,16 @@
+[
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted Build a safe archive extractor",
+    "time": "2026-07-16T08:05:07Z",
+    "products": ["Gemini Apps"],
+    "safeHtmlItem": [{"html": "<h2>Approach</h2><p>Reject <strong>path traversal</strong> and malformed HTML <em>without crashing"}],
+    "attachedFiles": [{"fileName": "sample.zip"}, "notes.txt"],
+    "subtitles": [{"name": "Python zipfile", "url": "https://docs.python.org/3/library/zipfile.html"}]
+  },
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted Minimal record with missing optional fields",
+    "time": "2026-07-17T01:02:03"
+  }
+]

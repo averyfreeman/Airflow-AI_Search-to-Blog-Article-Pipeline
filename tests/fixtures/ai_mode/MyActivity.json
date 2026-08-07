@@ -1,0 +1,24 @@
+[
+  {
+    "header": "Search",
+    "title": "Searched for diagnose a failing Airflow DAG",
+    "time": "2026-07-15T10:30:00-07:00",
+    "products": ["Search"],
+    "activityControls": ["Web & App Activity"],
+    "safeHtmlItem": [{"html": "<p>Your prompt:</p><p>Why does this DAG fail?</p><p>Search's response:</p><p>Validate the import first.</p><pre><code>airflow dags list-import-errors</code></pre>"}],
+    "imageFile": "dag-error.png"
+  },
+  {
+    "header": "Search",
+    "title": "Searched for diagnose a failing Airflow DAG",
+    "time": "2026-07-15T10:30:00-07:00",
+    "products": ["Search"],
+    "activityControls": ["Web & App Activity"],
+    "safeHtmlItem": [{"html": "<p>Your prompt:</p><p>Why does this DAG fail?</p><p>Search's response:</p><p>Validate the import first.</p><pre><code>airflow dags list-import-errors</code></pre>"}],
+    "imageFile": "dag-error.png"
+  },
+  {
+    "title": "Visited unrelated page",
+    "time": "2026-07-15T11:00:00Z"
+  }
+]

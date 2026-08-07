@@ -1,0 +1,3 @@
+beautifulsoup4>=4.12,<5.0
+httpx>=0.27,<1.0
+markdownify>=0.13,<1.0

@@ -1,0 +1,10 @@
+[
+  {
+    "header": "Gemini Apps",
+    "title": "Prompted Build a safe archive extractor",
+    "time": "2026-07-16T08:05:07Z",
+    "products": ["Gemini Apps"],
+    "safeHtmlItem": [{"html": "<h2>Approach</h2><p>Reject <strong>path traversal</strong> and malformed HTML without crashing.</p><pre><code>python -m pytest tests/test_archive.py</code></pre>"}],
+    "subtitles": [{"name": "Python zipfile", "url": "https://docs.python.org/3/library/zipfile.html"}]
+  }
+]

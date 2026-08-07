@@ -1,0 +1,76 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "openrouter": {
+      "npm": "@ai-sdk/openai",
+      "name": "OpenRouter Orchestrator",
+      "options": {
+        "baseURL": "https://openrouter.ai/api/v1",
+        "apiKey": "{file:~/.secrets/Macclawd/openrouter-api-key}"
+      },
+      "models": {
+        "poolside/laguna-s-2.1:free": {
+          "name": "laguna-s-2.1",
+          "tool_call": true,
+          "vision": false,
+          "options": {
+            "reasoningEffort": "high"
+          },
+          "permission": {
+            "bash": "allow",
+            "read": "allow",
+            "write": "allow",
+            "edit": "allow",
+            "websearch": "allow",
+            "webfetch": "allow",
+            "external_directory": "ask",
+            "doom_loop": "allow"
+          }
+        },
+        "openrouter/free": {
+          "name": "openrouter-free",
+          "tool_call": true,
+          "vision": false,
+          "options": {
+            "reasoningEffort": "high"
+          },
+          "permission": {
+            "bash": "allow",
+            "read": "allow",
+            "write": "allow",
+            "edit": "allow",
+            "websearch": "allow",
+            "webfetch": "allow",
+            "external_directory": "ask",
+            "doom_loop": "allow"
+          }
+        }
+      }
+    }
+  },
+  "agent": {
+    "planner": {
+      "model": "openrouter:openrouter/free"
+    },
+    "worker": {
+      "model": "openrouter:poolside/laguna-s-2.1:free"
+    }
+  },
+  "plugin": [
+    [
+      "opencode-orchestrator",
+      {
+        "agentConcurrency": {
+          "planner": 2,
+          "worker": 4
+        },
+        "missionLoop": {
+          "ledger": true,
+          "markdownMemory": true,
+          "maxEvidenceEvents": 20
+        }
+      }
+    ],
+    "@opencode-ai/sdk"
+  ]
+}
