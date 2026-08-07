@@ -2,6 +2,11 @@
 
 The `google_takeout_articles` DAG runs daily at 03:00 America/Los_Angeles and can also be triggered manually. It processes manually downloaded Google Takeout archives from `inbox/`; authenticated Takeout downloading is intentionally deferred to a later version. The optional `takeout_downloader_script` submodule is not imported or invoked by the Airflow DAG; it can be run separately to acquire archives for `inbox/`.
 
+The published article tree is intentionally kept out of this public repository.
+Publishing runs must make the private `UnixGreybeard.Org-Articles` repository
+available as the local `articles/` directory, or set `ARTICLE_PUBLISH_DIR` to a
+private checkout of that repository.
+
 ## Runtime
 
 - Airflow 3.3 with LocalExecutor and Postgres runs from `airflow/compose.yaml`.
