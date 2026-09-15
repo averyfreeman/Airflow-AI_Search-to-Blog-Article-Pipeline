@@ -92,6 +92,7 @@ def _model_batch_limit(conf: dict[str, Any] | None = None) -> int:
 )
 def google_takeout_articles() -> None:
     @task
+    """Provide the google takeout articles operation used by this pipeline."""
     def initialize_run() -> str:
         context = get_current_context()
         run_id = str(context["run_id"])

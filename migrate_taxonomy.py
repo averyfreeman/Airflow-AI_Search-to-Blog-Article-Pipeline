@@ -42,6 +42,7 @@ def split_document(text: str) -> tuple[str, str]:
 
 
 def frontmatter_title(frontmatter: str, fallback: str) -> str:
+    """Provide the frontmatter title operation used by this pipeline."""
     match = re.search(r"^Title:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", frontmatter, re.M)
     if not match:
         return fallback
@@ -49,6 +50,7 @@ def frontmatter_title(frontmatter: str, fallback: str) -> str:
 
 
 def update_article(text: str, category_label: str, provenance: list[str]) -> str:
+    """Provide the update article operation used by this pipeline."""
     frontmatter, body = split_document(text)
     frontmatter = replace_tags(frontmatter, category_label)
     category_line = f'Category: "{category_label}"'
@@ -69,6 +71,7 @@ def update_article(text: str, category_label: str, provenance: list[str]) -> str
 
 
 def migrate(source_dir: Path, *, dry_run: bool, manifest_path: Path) -> dict[str, object]:
+    """Provide the migrate operation used by this pipeline."""
     files = sorted(
         path for path in source_dir.rglob("*.md")
         if "_article_pipeline" not in path.parts and path.name != "article_surgeon_progress_tree.md"
@@ -132,6 +135,7 @@ def migrate(source_dir: Path, *, dry_run: bool, manifest_path: Path) -> dict[str
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run this module's command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path("articles"))
     parser.add_argument("--manifest", type=Path, default=Path("articles/_article_pipeline/taxonomy_migration.jsonl"))

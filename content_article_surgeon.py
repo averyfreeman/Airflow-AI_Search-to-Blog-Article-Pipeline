@@ -120,6 +120,7 @@ Provider = Literal["openrouter", "local", "mlx", "none"]
 
 @dataclasses.dataclass
 class PipelineConfig:
+    """Represent the pipeline config data or service boundary."""
     source_dir: Path
     articles: tuple[Path, ...] | None
     dry_run: bool
@@ -143,6 +144,7 @@ class PipelineConfig:
 
 @dataclasses.dataclass
 class FileChange:
+    """Represent the file change data or service boundary."""
     path: Path
     original_sha256: str
     changed: bool = False
@@ -158,41 +160,50 @@ class FileChange:
 
 
 def utc_now() -> str:
+    """Return the current UTC timestamp in the pipeline's canonical format."""
     return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
 def sha256_text(text: str) -> str:
+    """Provide the sha256 text operation used by this pipeline."""
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
 def safe_slug(text: str, max_len: int = 70) -> str:
+    """Safely handle slug at the pipeline boundary."""
     text = re.sub(r"[`*_~>#\[\]()]", "", text)
     text = re.sub(r"[^A-Za-z0-9]+", "_", text).strip("_").lower()
     return (text[:max_len].strip("_") or "split_article")
 
 
 def pipeline_dir(source_dir: Path) -> Path:
+    """Provide the pipeline dir operation used by this pipeline."""
     return source_dir / PIPELINE_DIRNAME
 
 
 def manifest_path(source_dir: Path) -> Path:
+    """Provide the manifest path operation used by this pipeline."""
     return pipeline_dir(source_dir) / MANIFEST_NAME
 
 
 def backups_dir(source_dir: Path) -> Path:
+    """Provide the backups dir operation used by this pipeline."""
     return pipeline_dir(source_dir) / BACKUP_DIRNAME
 
 
 def progress_log_path(source_dir: Path) -> Path:
+    """Provide the progress log path operation used by this pipeline."""
     return source_dir / PROGRESS_LOG_NAME
 
 
 def ensure_pipeline_dirs(source_dir: Path) -> None:
+    """Provide the ensure pipeline dirs operation used by this pipeline."""
     pipeline_dir(source_dir).mkdir(parents=True, exist_ok=True)
     backups_dir(source_dir).mkdir(parents=True, exist_ok=True)
 
 
 def append_manifest(source_dir: Path, event: dict[str, Any]) -> None:
+    """Persist manifest using the pipeline's safe-write rules."""
     ensure_pipeline_dirs(source_dir)
     event = {"timestamp": utc_now(), **event}
     with manifest_path(source_dir).open("a", encoding="utf-8") as f:
@@ -206,6 +217,7 @@ def append_manifest(source_dir: Path, event: dict[str, Any]) -> None:
 
 
 def load_processed_hashes(source_dir: Path) -> set[str]:
+    """Load processed hashes from the configured source."""
     path = manifest_path(source_dir)
     if not path.exists():
         return set()
@@ -225,6 +237,7 @@ def load_processed_hashes(source_dir: Path) -> set[str]:
 
 
 def backup_file(source_dir: Path, file_path: Path, original_text: str, digest: str) -> Path:
+    """Provide the backup file operation used by this pipeline."""
     rel_parent = file_path.parent.relative_to(source_dir)
     target_dir = backups_dir(source_dir) / rel_parent
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -236,12 +249,14 @@ def backup_file(source_dir: Path, file_path: Path, original_text: str, digest: s
 
 
 def atomic_write_text(path: Path, text: str) -> None:
+    """Persist write text using the pipeline's safe-write rules."""
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text(text, encoding="utf-8")
     os.replace(tmp, path)
 
 
 def should_skip_path(path: Path, source_dir: Path) -> bool:
+    """Provide the should skip path operation used by this pipeline."""
     parts = set(path.relative_to(source_dir).parts)
     if PIPELINE_DIRNAME in parts:
         return True
@@ -257,6 +272,7 @@ def should_skip_path(path: Path, source_dir: Path) -> bool:
 
 
 def iter_markdown_files(source_dir: Path, recursive: bool) -> list[Path]:
+    """Yield or discover markdown files from the configured source."""
     globber = source_dir.rglob if recursive else source_dir.glob
     files = [p for p in globber("*.md") if p.is_file() and not should_skip_path(p, source_dir)]
     return sorted(files)
@@ -295,6 +311,7 @@ def protect_front_matter_and_code(text: str) -> tuple[str, dict[str, str]]:
 
 
 def restore_protected(text: str, protected: dict[str, str]) -> str:
+    """Provide the restore protected operation used by this pipeline."""
     for token, block in protected.items():
         text = text.replace(token, block.rstrip("\n"))
     return text
@@ -306,6 +323,7 @@ def restore_protected(text: str, protected: dict[str, str]) -> str:
 
 
 def split_front_matter(text: str) -> tuple[str | None, str]:
+    """Provide the split front matter operation used by this pipeline."""
     match = FRONT_MATTER_RE.match(text)
     if not match:
         return None, text
@@ -313,6 +331,7 @@ def split_front_matter(text: str) -> tuple[str | None, str]:
 
 
 def parse_front_matter_title(text: str) -> str | None:
+    """Parse front matter title into the pipeline's structured representation."""
     fm, body = split_front_matter(text)
     if fm:
         for line in fm.splitlines():
@@ -325,6 +344,7 @@ def parse_front_matter_title(text: str) -> str | None:
 
 
 def format_front_matter(title: str, tags: list[str], source_file: str, split_from_line: int | None = None) -> str:
+    """Provide the format front matter operation used by this pipeline."""
     safe_title = title.replace('"', "'").strip() or "Untitled Article"
     tags = [t.strip().replace('"', "'") for t in tags if t and t.strip()]
     if not tags:
@@ -351,6 +371,7 @@ def format_front_matter(title: str, tags: list[str], source_file: str, split_fro
 
 
 def looks_like_html_fragment(text: str) -> bool:
+    """Provide the looks like html fragment operation used by this pipeline."""
     if not HTML_TAG_RE.search(text):
         return False
     # Avoid false positives such as generic type parameters in prose.
@@ -411,6 +432,7 @@ def convert_html_fragments(segment: str) -> tuple[str, bool]:
 
 
 def normalize_markdown_spacing(text: str) -> str:
+    """Normalize markdown spacing into the canonical form."""
     text = text.replace("\r\n", "\n")
     text = re.sub(r"\n{4,}", "\n\n\n", text)
     text = re.sub(r"[ \t]+\n", "\n", text)
@@ -423,6 +445,7 @@ def normalize_markdown_spacing(text: str) -> str:
 
 
 def deterministic_conversation_cleanup(text: str) -> tuple[str, int]:
+    """Provide the deterministic conversation cleanup operation used by this pipeline."""
     protected_text, protected = protect_front_matter_and_code(text)
     removed = 0
     output_lines: list[str] = []
@@ -463,6 +486,7 @@ def needs_conversation_audit(text: str) -> bool:
 
 
 def line_numbered_window(lines: list[str], start_index: int, end_index: int) -> str:
+    """Provide the line numbered window operation used by this pipeline."""
     out = []
     for i in range(start_index, end_index):
         out.append(f"{i + 1}: {lines[i]}")
@@ -470,6 +494,7 @@ def line_numbered_window(lines: list[str], start_index: int, end_index: int) -> 
 
 
 def remove_line_numbers(text: str, line_numbers: set[int]) -> str:
+    """Provide the remove line numbers operation used by this pipeline."""
     lines = text.splitlines()
     kept = [line for idx, line in enumerate(lines, start=1) if idx not in line_numbers]
     return normalize_markdown_spacing("\n".join(kept))
@@ -481,6 +506,7 @@ def remove_line_numbers(text: str, line_numbers: set[int]) -> str:
 
 
 def first_heading(text: str) -> str | None:
+    """Provide the first heading operation used by this pipeline."""
     for line in text.splitlines():
         m = HEADING_RE.match(line)
         if m:
@@ -492,12 +518,14 @@ def first_heading(text: str) -> str | None:
 
 
 def clean_heading_text(text: str) -> str:
+    """Provide the clean heading text operation used by this pipeline."""
     text = re.sub(r"#+\s*$", "", text).strip()
     text = re.sub(r"[`*_\[\]()]+", "", text).strip()
     return text
 
 
 def get_heading_positions(text: str) -> list[dict[str, Any]]:
+    """Provide the get heading positions operation used by this pipeline."""
     lines = text.splitlines()
     headings: list[dict[str, Any]] = []
     for idx, line in enumerate(lines, start=1):
@@ -519,6 +547,7 @@ def needs_topic_split(text: str, min_segment_chars: int) -> bool:
 
 
 def build_heading_map(text: str, max_chars: int) -> str:
+    """Build heading map from validated pipeline inputs."""
     lines = text.splitlines()
     headings = get_heading_positions(text)
     if not headings:
@@ -543,6 +572,7 @@ def build_heading_map(text: str, max_chars: int) -> str:
 
 
 def nearest_heading_line(requested_line: int, headings: list[dict[str, Any]], max_distance: int = 8) -> int | None:
+    """Provide the nearest heading line operation used by this pipeline."""
     if not headings:
         return None
     candidates = sorted((abs(int(h["line"]) - requested_line), int(h["line"])) for h in headings)
@@ -553,6 +583,7 @@ def nearest_heading_line(requested_line: int, headings: list[dict[str, Any]], ma
 
 
 def split_text_at_line(text: str, line_num: int) -> tuple[str, str]:
+    """Provide the split text at line operation used by this pipeline."""
     lines = text.splitlines()
     before = "\n".join(lines[: line_num - 1]).rstrip() + "\n"
     after = "\n".join(lines[line_num - 1 :]).lstrip("\n") + "\n"
@@ -560,6 +591,7 @@ def split_text_at_line(text: str, line_num: int) -> tuple[str, str]:
 
 
 def strip_front_matter_for_segment(text: str) -> str:
+    """Provide the strip front matter for segment operation used by this pipeline."""
     _, body = split_front_matter(text)
     return body.lstrip("\n")
 
@@ -570,6 +602,7 @@ def strip_front_matter_for_segment(text: str) -> str:
 
 
 def extract_json_object(raw: str) -> dict[str, Any]:
+    """Extract json object without changing protected source content."""
     raw = raw.strip()
     if raw.startswith("```"):
         raw = re.sub(r"^```(?:json)?\s*", "", raw)
@@ -591,6 +624,7 @@ def extract_json_object(raw: str) -> dict[str, Any]:
 
 
 def completion_url(base_url: str) -> str:
+    """Provide the completion url operation used by this pipeline."""
     return base_url.rstrip("/") + "/chat/completions"
 
 
@@ -602,6 +636,7 @@ async def chat_completion(
     json_mode: bool = False,
     temperature: float | None = None,
 ) -> str:
+    """Provide the chat completion operation used by this pipeline."""
     if provider == "none":
         raise ValueError("Provider 'none' cannot make chat completions.")
 
@@ -651,6 +686,7 @@ async def llm_conversation_audit(
     config: PipelineConfig,
     text: str,
 ) -> tuple[set[int], list[str]]:
+    """Provide the llm conversation audit operation used by this pipeline."""
     if config.conversation_auditor == "none":
         return set(), []
 
@@ -724,6 +760,7 @@ async def llm_detect_topic_splits(
     file_path: Path,
     text: str,
 ) -> dict[str, Any]:
+    """Provide the llm detect topic splits operation used by this pipeline."""
     if config.split_evaluator == "none":
         return {"split_recommended": False, "split_points": []}
 
@@ -788,6 +825,7 @@ def normalize_split_points(
     decision: dict[str, Any],
     config: PipelineConfig,
 ) -> list[dict[str, Any]]:
+    """Normalize split points into the canonical form."""
     if not decision.get("split_recommended"):
         return []
     headings = get_heading_positions(text)
@@ -840,6 +878,7 @@ def apply_splits(
     split_points: list[dict[str, Any]],
     dry_run: bool,
 ) -> tuple[str, list[Path]]:
+    """Provide the apply splits operation used by this pipeline."""
     if not split_points:
         return text, []
 
@@ -877,6 +916,7 @@ def apply_splits(
 
 
 def generate_progress_tree(source_dir: Path, changes: list[FileChange] | None = None) -> None:
+    """Provide the generate progress tree operation used by this pipeline."""
     lines = ["# Article Surgeon Progress Tree", "", "```text"]
     files = iter_markdown_files(source_dir, recursive=True)
     for p in files:
@@ -907,6 +947,7 @@ def generate_progress_tree(source_dir: Path, changes: list[FileChange] | None = 
 
 
 async def process_file(client: httpx.AsyncClient, config: PipelineConfig, file_path: Path) -> FileChange:
+    """Provide the process file operation used by this pipeline."""
     async with FILE_SEMAPHORE:
         original = file_path.read_text(encoding="utf-8")
         original_hash = sha256_text(original)
@@ -983,6 +1024,7 @@ async def process_file(client: httpx.AsyncClient, config: PipelineConfig, file_p
 
 
 def parse_args(argv: list[str]) -> PipelineConfig:
+    """Parse args into the pipeline's structured representation."""
     parser = argparse.ArgumentParser(
         description="Clean conversation-derived Markdown, convert HTML fragments, and split sharp topic divergences.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
@@ -1070,6 +1112,7 @@ def parse_args(argv: list[str]) -> PipelineConfig:
 
 
 async def main_async(argv: list[str]) -> int:
+    """Provide the main async operation used by this pipeline."""
     config = parse_args(argv)
     source_dir = config.source_dir
 
@@ -1149,6 +1192,7 @@ async def main_async(argv: list[str]) -> int:
 
 
 def main() -> None:
+    """Run this module's command-line entry point."""
     raise SystemExit(asyncio.run(main_async(sys.argv[1:])))
 
 

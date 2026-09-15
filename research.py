@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 
 @dataclasses.dataclass(frozen=True)
 class ResearchSource:
+    """Represent the research source data or service boundary."""
     title: str
     url: str
     snippet: str

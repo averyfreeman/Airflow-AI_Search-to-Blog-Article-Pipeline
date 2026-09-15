@@ -16,6 +16,7 @@ PROTECTED_NAMES = {"articles", ".git"}
 
 
 def sha256(path: Path) -> str:
+    """Provide the sha256 operation used by this pipeline."""
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         while chunk := stream.read(1024 * 1024):
@@ -24,6 +25,7 @@ def sha256(path: Path) -> str:
 
 
 def candidates(root: Path, older_than: dt.datetime) -> list[Path]:
+    """Provide the candidates operation used by this pipeline."""
     root = root.resolve()
     if root.name in PROTECTED_NAMES:
         raise ValueError(f"Refusing to clean protected root: {root}")
@@ -38,6 +40,7 @@ def candidates(root: Path, older_than: dt.datetime) -> list[Path]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run this module's command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("root", type=Path, help="Explicit staging or raw-data root to audit")
     parser.add_argument("--older-than-days", type=int, default=DEFAULT_RETENTION_DAYS)

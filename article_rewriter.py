@@ -39,10 +39,12 @@ DEFAULT_MAX_INPUT_TOKENS = 40_000
 
 
 def utc_now() -> str:
+    """Return the current UTC timestamp in the pipeline's canonical format."""
     return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
 def protect_markdown(text: str) -> tuple[str, dict[str, str]]:
+    """Safely handle markdown at the pipeline boundary."""
     protected: dict[str, str] = {}
 
     def stash(prefix: str, value: str) -> str:
@@ -61,6 +63,7 @@ def protect_markdown(text: str) -> tuple[str, dict[str, str]]:
 
 
 def restore_markdown(text: str, protected: dict[str, str]) -> str:
+    """Provide the restore markdown operation used by this pipeline."""
     missing = [token for token in protected if token not in text]
     if missing:
         raise ValueError(f"Rewrite omitted {len(missing)} protected Markdown token(s): {missing[:3]}")
@@ -70,12 +73,14 @@ def restore_markdown(text: str, protected: dict[str, str]) -> str:
 
 
 def effective_context(base_url: str, timeout: float = 10.0) -> int:
+    """Provide the effective context operation used by this pipeline."""
     response = httpx.get(base_url.removesuffix("/v1").rstrip("/") + "/props", timeout=timeout)
     response.raise_for_status()
     return int(response.json()["default_generation_settings"]["n_ctx"])
 
 
 def score_record_from_article(article: Path, source_dir: Path) -> Path:
+    """Calculate the score record from article used by routing and review."""
     text = article.read_text(encoding="utf-8")
     configured = frontmatter_value(text, "Score_Record")
     if configured:
@@ -90,6 +95,7 @@ def score_record_from_article(article: Path, source_dir: Path) -> Path:
 
 
 def load_score_record(article: Path, source_dir: Path) -> tuple[dict[str, Any], Path]:
+    """Load score record from the configured source."""
     path = score_record_from_article(article, source_dir)
     data = json.loads(path.read_text(encoding="utf-8"))
     if data.get("disposition") != "rewrite":
@@ -100,6 +106,7 @@ def load_score_record(article: Path, source_dir: Path) -> tuple[dict[str, Any], 
 
 
 class LocalRewriteClient:
+    """Represent the local rewrite client data or service boundary."""
     def __init__(self, base_url: str = DEFAULT_LOCAL_BASE_URL, timeout: float = 600.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
@@ -155,6 +162,7 @@ class LocalRewriteClient:
 
 
 def validate_rewrite(original_body: str, rewritten_body: str, protected: dict[str, str]) -> None:
+    """Validate rewrite against the pipeline's safety and shape rules."""
     if len(rewritten_body.strip()) < 100:
         raise ValueError("Rewritten article is critically short")
     if protected and any(value not in rewritten_body for value in protected.values()):
@@ -168,6 +176,7 @@ def validate_rewrite(original_body: str, rewritten_body: str, protected: dict[st
 
 
 def backup_article(article: Path, source_dir: Path, original: str) -> Path:
+    """Provide the backup article operation used by this pipeline."""
     digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
     relative = article.relative_to(source_dir)
     target = source_dir / "_article_pipeline" / "backups" / relative.parent / f"{article.stem}.{digest}.pre-rewrite.md"
@@ -178,6 +187,7 @@ def backup_article(article: Path, source_dir: Path, original: str) -> Path:
 
 
 def append_manifest(source_dir: Path, event: dict[str, Any]) -> None:
+    """Persist manifest using the pipeline's safe-write rules."""
     path = source_dir / "_article_pipeline" / "rewrite_manifest.jsonl"
     append_jsonl(path, {"timestamp": utc_now(), **event})
 
@@ -191,6 +201,7 @@ def rewrite_file(
     max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
     research: bool = False,
 ) -> dict[str, Any]:
+    """Provide the rewrite file operation used by this pipeline."""
     score_record, score_path = load_score_record(article, source_dir)
     original = article.read_text(encoding="utf-8")
     _, body = split_frontmatter(original)
@@ -256,6 +267,7 @@ def rewrite_file(
 
 
 def iter_rewrite_queue(source_dir: Path) -> Iterable[Path]:
+    """Yield or discover rewrite queue from the configured source."""
     for article in sorted(source_dir.rglob("*.md")):
         if "_article_pipeline" in article.parts or "backup" in article.parts:
             continue
@@ -264,6 +276,7 @@ def iter_rewrite_queue(source_dir: Path) -> Iterable[Path]:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse args into the pipeline's structured representation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path("./staging"))
     parser.add_argument("--article", type=Path, action="append")
@@ -275,6 +288,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run this module's command-line entry point."""
     args = parse_args(argv or sys.argv[1:])
     client = LocalRewriteClient(args.local_base_url)
     articles = args.article or list(iter_rewrite_queue(args.source))

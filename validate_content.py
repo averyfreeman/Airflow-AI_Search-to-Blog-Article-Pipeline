@@ -18,6 +18,7 @@ FENCE_RE = re.compile(r"^(```|~~~).*?^\1\s*$", re.M | re.S)
 
 
 def validate_file(path: Path, source_dir: Path) -> list[str]:
+    """Validate file against the pipeline's safety and shape rules."""
     errors: list[str] = []
     text = path.read_text(encoding="utf-8")
     match = FRONTMATTER_RE.match(text)
@@ -47,6 +48,7 @@ def validate_file(path: Path, source_dir: Path) -> list[str]:
 
 
 def validate_tree(source_dir: Path) -> dict[str, object]:
+    """Validate tree against the pipeline's safety and shape rules."""
     files = sorted(
         path for path in source_dir.rglob("*.md")
         if "_article_pipeline" not in path.parts and path.name != "article_surgeon_progress_tree.md"
@@ -66,6 +68,7 @@ def validate_tree(source_dir: Path) -> dict[str, object]:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run this module's command-line entry point."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("source", type=Path, default=Path("articles"), nargs="?")
     parser.add_argument("--json", action="store_true")

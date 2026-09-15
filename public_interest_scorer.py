@@ -104,12 +104,14 @@ SCORE_SCHEMA = {
 
 @dataclass(frozen=True)
 class ProviderConfig:
+    """Represent the provider config data or service boundary."""
     base_url: str
     model: str
 
 
 @dataclass(frozen=True)
 class ScoreResult:
+    """Represent the score result data or service boundary."""
     score: float
     disposition: str
     dimensions: dict[str, float]
@@ -126,10 +128,12 @@ class ScoreResult:
 
 
 def utc_now() -> str:
+    """Return the current UTC timestamp in the pipeline's canonical format."""
     return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
 def extract_json_object(raw: str) -> dict[str, Any]:
+    """Extract json object without changing protected source content."""
     cleaned = strip_thought_channels(raw).strip()
     cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s*```$", "", cleaned).strip()
@@ -214,6 +218,7 @@ def normalize_document_brief(value: dict[str, Any], *, source_text: str = "") ->
 
 
 def load_provider_config(path: Path = DEFAULT_CONFIG_PATH) -> ProviderConfig:
+    """Load provider config from the configured source."""
     raw = json.loads(path.read_text(encoding="utf-8"))
     provider = raw.get("provider", {}).get("openrouter", {})
     base_url = str(provider.get("options", {}).get("baseURL", "https://openrouter.ai/api/v1")).rstrip("/")
@@ -226,6 +231,7 @@ def load_provider_config(path: Path = DEFAULT_CONFIG_PATH) -> ProviderConfig:
 
 
 def load_api_key(key_file: Path | None = None) -> str:
+    """Load api key from the configured source."""
     environment = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if environment:
         return environment
@@ -240,14 +246,17 @@ def load_api_key(key_file: Path | None = None) -> str:
 
 
 def clamp_score(value: Any) -> float:
+    """Calculate the clamp score used by routing and review."""
     return max(0.0, min(1.0, float(value)))
 
 
 def weighted_score(dimensions: dict[str, Any]) -> float:
+    """Calculate the weighted score used by routing and review."""
     return round(sum(clamp_score(dimensions[name]) * weight for name, weight in SCORE_WEIGHTS.items()), 4)
 
 
 def route_disposition(score: float, *, privacy_risk: bool = False, material_uncertainty: bool = False) -> str:
+    """Provide the route disposition operation used by this pipeline."""
     if privacy_risk or material_uncertainty:
         return "review"
     if score >= REWRITE_THRESHOLD:
@@ -258,6 +267,7 @@ def route_disposition(score: float, *, privacy_risk: bool = False, material_unce
 
 
 def token_count(base_url: str, text: str, timeout: float = 30.0) -> int:
+    """Provide the token count operation used by this pipeline."""
     try:
         response = httpx.post(
             base_url.removesuffix("/v1").rstrip("/") + "/tokenize",
@@ -271,6 +281,7 @@ def token_count(base_url: str, text: str, timeout: float = 30.0) -> int:
 
 
 def chunk_markdown(text: str, base_url: str, max_tokens: int = DIGEST_CHUNK_TOKENS) -> list[str]:
+    """Provide the chunk markdown operation used by this pipeline."""
     if token_count(base_url, text) <= max_tokens:
         return [text]
     sections = re.split(r"(?=^#{1,6}\s+)", text, flags=re.M)
@@ -332,6 +343,7 @@ def build_document_brief(
     model: str | None = None,
     chat_json: Callable[..., dict[str, Any]] = _chat_json,
 ) -> dict[str, Any]:
+    """Build document brief from validated pipeline inputs."""
     local_model = model or discover_single_model(local_base_url)
     _, body = split_frontmatter(text)
     chunks = chunk_markdown(body, local_base_url)
@@ -374,6 +386,7 @@ def build_document_brief(
 
 
 def representative_excerpts(text: str, max_chars: int = 18_000) -> str:
+    """Provide the representative excerpts operation used by this pipeline."""
     _, body = split_frontmatter(text)
     if len(body) <= max_chars:
         return body
@@ -389,6 +402,7 @@ def representative_excerpts(text: str, max_chars: int = 18_000) -> str:
 
 
 class OpenRouterScoringClient:
+    """Represent the open router scoring client data or service boundary."""
     def __init__(self, provider: ProviderConfig, api_key: str, timeout: float = 240.0, retries: int = 3):
         self.provider = provider
         self.api_key = api_key
@@ -458,6 +472,7 @@ def score_text(
     brief: dict[str, Any],
     client: OpenRouterScoringClient,
 ) -> ScoreResult:
+    """Calculate the score text used by routing and review."""
     raw, actual_model, provider = client.score(brief, representative_excerpts(text))
     dimensions = {name: clamp_score(raw[name]) for name in SCORE_WEIGHTS}
     _, body = split_frontmatter(text)
@@ -506,6 +521,7 @@ def source_evidence(text: str) -> tuple[int, bool]:
 
 
 def requires_model_scoring(text: str) -> bool:
+    """Provide the requires model scoring operation used by this pipeline."""
     evidence_chars, has_concrete_artifact = source_evidence(text)
     return evidence_chars >= 160 or has_concrete_artifact
 
@@ -527,6 +543,7 @@ def deterministic_score(
     *,
     reason: str = "Insufficient source evidence for model scoring.",
 ) -> ScoreResult:
+    """Provide the deterministic score operation used by this pipeline."""
     brief = normalize_document_brief({}, source_text=text)
     brief["uncertainties"] = [reason]
     dimensions = {
@@ -555,16 +572,19 @@ def deterministic_score(
 
 
 def score_record_path(article: Path, source_dir: Path) -> Path:
+    """Calculate the score record path used by routing and review."""
     digest = hashlib.sha256(str(article.resolve()).encode("utf-8")).hexdigest()[:20]
     return source_dir / "_article_pipeline" / "scores" / f"{digest}.score.json"
 
 
 def append_manifest(source_dir: Path, record: dict[str, Any]) -> None:
+    """Persist manifest using the pipeline's safe-write rules."""
     path = source_dir / "_article_pipeline" / "public_interest_scores.jsonl"
     append_jsonl(path, record)
 
 
 def backup_before_scoring(article: Path, source_dir: Path, text: str) -> Path:
+    """Provide the backup before scoring operation used by this pipeline."""
     relative = article.resolve().relative_to(source_dir.resolve())
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()[:12]
     target = (
@@ -590,6 +610,7 @@ def score_file(
     brief_builder: Callable[..., dict[str, Any]] = build_document_brief,
     deterministic_reason: str | None = None,
 ) -> tuple[ScoreResult, Path]:
+    """Calculate the score file used by routing and review."""
     text = article.read_text(encoding="utf-8")
     if deterministic_reason or not requires_model_scoring(text):
         result = deterministic_score(text, reason=deterministic_reason or "Insufficient source evidence for model scoring.")
@@ -630,6 +651,7 @@ def score_file(
 
 
 def iter_markdown(source: Path, recursive: bool = True) -> Iterable[Path]:
+    """Yield or discover markdown from the configured source."""
     iterator = source.rglob("*.md") if recursive else source.glob("*.md")
     for path in sorted(iterator):
         if "_article_pipeline" not in path.parts and "backup" not in path.parts:
@@ -637,6 +659,7 @@ def iter_markdown(source: Path, recursive: bool = True) -> Iterable[Path]:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse args into the pipeline's structured representation."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path("./staging"))
     parser.add_argument("--article", type=Path, action="append")
@@ -649,6 +672,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run this module's command-line entry point."""
     args = parse_args(argv or sys.argv[1:])
     provider = load_provider_config(args.opencode_config)
     client = OpenRouterScoringClient(provider, load_api_key(args.key_file))

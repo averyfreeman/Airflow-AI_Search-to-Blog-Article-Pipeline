@@ -20,6 +20,7 @@ TARGET_CATEGORY_COUNT = 23
 
 @dataclass(frozen=True)
 class Category:
+    """Represent the category data or service boundary."""
     slug: str
     label: str
     description: str
@@ -86,6 +87,7 @@ _RULES: tuple[tuple[str, tuple[str, ...]], ...] = (
 
 
 def category(slug_or_label: str) -> Category:
+    """Provide the category operation used by this pipeline."""
     key = slug_or_label.strip().casefold()
     if key in CATEGORY_BY_SLUG:
         return CATEGORY_BY_SLUG[key]
@@ -95,14 +97,17 @@ def category(slug_or_label: str) -> Category:
 
 
 def normalize_tag(value: str) -> str:
+    """Normalize tag into the canonical form."""
     return re.sub(r"\s+", " ", value.strip().strip('"\''))
 
 
 def is_provenance_tag(value: str) -> bool:
+    """Provide the is provenance tag operation used by this pipeline."""
     return normalize_tag(value).casefold() in PROVENANCE_TAGS
 
 
 def parse_tags(frontmatter: str) -> list[str]:
+    """Parse tags into the pipeline's structured representation."""
     match = re.search(r"^Tags:\s*\n((?:^[ \t]+- .*\n?)+)", frontmatter, re.M)
     if not match:
         return []
@@ -110,12 +115,14 @@ def parse_tags(frontmatter: str) -> list[str]:
 
 
 def render_tags(label: str) -> str:
+    """Render tags for downstream publication."""
     return f"Tags:\n  - {label}\n"
 
 
 def replace_tags(frontmatter: str, label: str) -> str:
     # The matched block usually consumes the newline after the final list
     # item. Keep a separator before Source/Category fields.
+    """Provide the replace tags operation used by this pipeline."""
     replacement = render_tags(label)
     pattern = r"^Tags:\s*\n(?:^[ \t]+- .*\n?)+"
     if re.search(pattern, frontmatter, re.M):
@@ -132,6 +139,7 @@ def _search_text(title: str, tags: Iterable[str], folder: str, body: str) -> str
 
 
 def classify(title: str, tags: Iterable[str], folder: str, body: str = "") -> tuple[Category, float, str]:
+    """Provide the classify operation used by this pipeline."""
     text = _search_text(title, tags, folder, body)
     scores: dict[str, int] = {item.slug: 0 for item in CATEGORIES}
     matched: dict[str, list[str]] = {item.slug: [] for item in CATEGORIES}
@@ -155,6 +163,7 @@ def classify(title: str, tags: Iterable[str], folder: str, body: str = "") -> tu
 
 
 def category_from_text(text: str, *, folder: str = "") -> Category:
+    """Provide the category from text operation used by this pipeline."""
     title_match = re.search(r"^Title:\s*(?:\"([^\"]*)\"|'([^']*)'|(.*))$", text, re.M)
     title = next((part for part in title_match.groups() if part is not None), "") if title_match else ""
     fm_match = re.match(r"\A---\s*\n(.*?)\n---", text, re.S)

@@ -41,6 +41,7 @@ FRONT_MATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n?", re.S)
 
 @dataclasses.dataclass(frozen=True)
 class ActivityRecord:
+    """Represent the activity record data or service boundary."""
     source_product: SourceProduct
     source_record_id: str
     occurred_at: str
@@ -56,6 +57,7 @@ class ActivityRecord:
 
 @dataclasses.dataclass(frozen=True)
 class ArchiveValidation:
+    """Represent the archive validation data or service boundary."""
     path: Path
     sha256: str
     members: tuple[str, ...]
@@ -63,14 +65,17 @@ class ArchiveValidation:
 
 
 def utc_now() -> str:
+    """Return the current UTC timestamp in the pipeline's canonical format."""
     return dt.datetime.now(dt.UTC).isoformat(timespec="seconds")
 
 
 def sha256_bytes(data: bytes) -> str:
+    """Provide the sha256 bytes operation used by this pipeline."""
     return hashlib.sha256(data).hexdigest()
 
 
 def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
+    """Provide the sha256 file operation used by this pipeline."""
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         while chunk := stream.read(chunk_size):
@@ -79,6 +84,7 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 
 def canonical_json(value: Any) -> bytes:
+    """Provide the canonical json operation used by this pipeline."""
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 
@@ -96,6 +102,7 @@ def strip_thought_channels(text: str) -> str:
 
 
 def discover_single_model(base_url: str, timeout: float = 10.0) -> str:
+    """Yield or discover single model from the configured source."""
     response = httpx.get(base_url.rstrip("/") + "/models", timeout=timeout)
     response.raise_for_status()
     model_ids = [str(item["id"]) for item in response.json().get("data", []) if item.get("id")]
@@ -133,6 +140,7 @@ def _validate_member_name(name: str) -> str:
 
 
 def validate_archive(path: Path) -> ArchiveValidation:
+    """Validate archive against the pipeline's safety and shape rules."""
     path = path.resolve()
     if not path.is_file():
         raise FileNotFoundError(path)
@@ -173,6 +181,7 @@ def _safe_target(root: Path, member_name: str) -> Path:
 
 
 def extract_archive(validation: ArchiveValidation, destination: Path) -> Path:
+    """Extract archive without changing protected source content."""
     destination.mkdir(parents=True, exist_ok=True)
     if any(destination.iterdir()):
         return destination
@@ -207,12 +216,14 @@ def extract_archive(validation: ArchiveValidation, destination: Path) -> Path:
 
 
 def discover_activity_jsons(root: Path) -> list[Path]:
+    """Yield or discover activity jsons from the configured source."""
     if root.is_file():
         return [root] if root.name.lower().endswith(".json") else []
     return sorted(path for path in root.rglob("MyActivity.json") if path.is_file())
 
 
 def normalize_timestamp(raw: str) -> str:
+    """Normalize timestamp into the canonical form."""
     if not raw:
         raise ValueError("Activity record is missing a timestamp")
     candidate = raw.strip().replace("Z", "+00:00")
@@ -223,6 +234,7 @@ def normalize_timestamp(raw: str) -> str:
 
 
 def infer_source_product(path: Path, records: list[dict[str, Any]]) -> SourceProduct:
+    """Provide the infer source product operation used by this pipeline."""
     path_hint = " ".join(part.lower() for part in path.parts)
     if "gemini apps" in path_hint:
         return "gemini_apps"
@@ -249,6 +261,7 @@ def _safe_html(item: dict[str, Any]) -> str:
 
 
 def deterministic_html_to_markdown(html: str) -> str:
+    """Provide the deterministic html to markdown operation used by this pipeline."""
     if not html:
         return ""
     markdown = html_to_markdown(html, heading_style="ATX", bullets="-")
@@ -285,6 +298,7 @@ def _subtitles(item: dict[str, Any]) -> tuple[dict[str, str], ...]:
 
 
 def iter_activity_records(path: Path) -> Iterator[ActivityRecord]:
+    """Yield or discover activity records from the configured source."""
     raw = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(raw, list):
         raise ValueError(f"Expected a JSON array in {path}")
@@ -324,10 +338,12 @@ def iter_activity_records(path: Path) -> Iterator[ActivityRecord]:
 
 
 def yaml_string(value: str) -> str:
+    """Provide the yaml string operation used by this pipeline."""
     return json.dumps(value, ensure_ascii=False)
 
 
 def split_frontmatter(text: str) -> tuple[str, str]:
+    """Provide the split frontmatter operation used by this pipeline."""
     match = FRONT_MATTER_RE.match(text)
     if not match:
         return "", text
@@ -335,6 +351,7 @@ def split_frontmatter(text: str) -> tuple[str, str]:
 
 
 def frontmatter_value(text: str, key: str) -> str | None:
+    """Provide the frontmatter value operation used by this pipeline."""
     frontmatter, _ = split_frontmatter(text)
     for line in frontmatter.splitlines():
         if ":" not in line or line.startswith((" ", "\t")):
@@ -351,6 +368,7 @@ def frontmatter_value(text: str, key: str) -> str | None:
 
 
 def update_frontmatter(text: str, values: dict[str, str | float | int | bool]) -> str:
+    """Provide the update frontmatter operation used by this pipeline."""
     frontmatter, body = split_frontmatter(text)
     existing_lines = frontmatter.splitlines() if frontmatter else []
     replaced_keys = {key.lower() for key in values}
@@ -380,6 +398,7 @@ def update_frontmatter(text: str, values: dict[str, str | float | int | bool]) -
 
 
 def slugify(value: str, max_length: int = 70) -> str:
+    """Provide the slugify operation used by this pipeline."""
     slug = re.sub(r"[^A-Za-z0-9]+", "_", value).strip("_")
     return (slug[:max_length].strip("_") or "untitled")
 
@@ -438,6 +457,7 @@ def render_markdown(
     local_base_url: str = DEFAULT_LOCAL_BASE_URL,
     timeout: float = 180.0,
 ) -> str:
+    """Render markdown for downstream publication."""
     date_value = dt.datetime.fromisoformat(record.occurred_at.replace("Z", "+00:00")).strftime("%Y-%m-%d_%H_%M")
     category, _, _ = classify(record.title, _tags(record), "", record.markdown_body)
     lines = [
@@ -477,11 +497,13 @@ def render_markdown(
 
 
 def output_path(record: ActivityRecord, output_dir: Path) -> Path:
+    """Provide the output path operation used by this pipeline."""
     timestamp = dt.datetime.fromisoformat(record.occurred_at.replace("Z", "+00:00")).strftime("%Y-%m-%d_%H_%M")
     return output_dir / f"{timestamp}_{slugify(record.title)}_{record.source_record_id[:10]}.md"
 
 
 def atomic_write(path: Path, content: str) -> None:
+    """Persist write using the pipeline's safe-write rules."""
     path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.NamedTemporaryFile("w", encoding="utf-8", dir=path.parent, delete=False) as stream:
         stream.write(content)
@@ -504,6 +526,7 @@ def append_jsonl(path: Path, event: dict[str, Any]) -> None:
 
 
 def append_manifest(output_dir: Path, event: dict[str, Any]) -> None:
+    """Persist manifest using the pipeline's safe-write rules."""
     manifest = output_dir / "_article_pipeline" / "ingest_manifest.jsonl"
     append_jsonl(manifest, {"timestamp": utc_now(), **event})
 
@@ -516,6 +539,7 @@ def process_json(
     describe_images: bool = False,
     local_base_url: str = DEFAULT_LOCAL_BASE_URL,
 ) -> list[Path]:
+    """Provide the process json operation used by this pipeline."""
     written: list[Path] = []
     for record in iter_activity_records(json_path):
         target = output_path(record, output_dir)
@@ -551,6 +575,7 @@ def process_input(
     describe_images: bool = False,
     local_base_url: str = DEFAULT_LOCAL_BASE_URL,
 ) -> list[Path]:
+    """Provide the process input operation used by this pipeline."""
     input_path = input_path.resolve()
     if input_path.is_file() and input_path.name.lower().endswith(ARCHIVE_SUFFIXES):
         validation = validate_archive(input_path)
@@ -591,12 +616,14 @@ def process_input(
 
 
 def discover_archives(inbox: Path) -> list[Path]:
+    """Yield or discover archives from the configured source."""
     if not inbox.exists():
         return []
     return sorted(path for path in inbox.iterdir() if path.is_file() and path.name.lower().endswith(ARCHIVE_SUFFIXES))
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
+    """Parse args into the pipeline's structured representation."""
     parser = argparse.ArgumentParser(description=__doc__)
     subparsers = parser.add_subparsers(dest="command", required=True)
     validate = subparsers.add_parser("validate", help="Validate an archive without extracting it.")
@@ -612,6 +639,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    """Run this module's command-line entry point."""
     args = parse_args(argv or sys.argv[1:])
     if args.command == "validate":
         result = validate_archive(args.archive)
