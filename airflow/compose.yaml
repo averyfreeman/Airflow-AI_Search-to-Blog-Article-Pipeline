@@ -14,8 +14,18 @@ x-airflow-common: &airflow-common
     AIRFLOW__SCHEDULER__PARSING_PROCESSES: "2"
     ARTICLE_PIPELINE_ROOT: /workspace/content
     ARTICLE_PIPELINE_MAX_MODEL_ARTICLES: "100"
+    ARTICLE_PIPELINE_SELECTION: "N"
+    ARTICLE_PIPELINE_PILOT_N: "10"
+    TAKEOUT_SOURCE: /workspace/content/data
+    TAKEOUT_AUTO_COPY: "false"
     LOCAL_LLM_BASE_URL: http://host.docker.internal:11400/v1
-    OPENROUTER_API_KEY_FILE: /run/secrets/openrouter_api_key
+    CODEX_RUNTIME: gateway
+    CODEX_GATEWAY_URL: http://host.docker.internal:8787
+    CODEX_GATEWAY_TOKEN_FILE: /run/secrets/codex_gateway_token
+    CODEX_MODEL: gpt-5.6-luna
+    CODEX_REASONING_EFFORT: max
+    CODEX_LOCAL_FALLBACK: "true"
+    ARTICLE_PIPELINE_ALLOW_SENSITIVE: "false"
     PYTHONDONTWRITEBYTECODE: "1"
   volumes:
     - ..:/workspace/content
@@ -24,7 +34,7 @@ x-airflow-common: &airflow-common
     - ./config:/opt/airflow/config
     - ./plugins:/opt/airflow/plugins
   secrets:
-    - openrouter_api_key
+    - codex_gateway_token
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-common-depends-on
     postgres:
@@ -52,8 +62,7 @@ services:
       - bash
       - -c
       - |
-        airflow pools set local_llama 2 "llama.cpp parallel slots"
-        airflow pools set openrouter 2 "OpenRouter concurrent requests"
+        airflow pools set codex 2 "Codex model requests"
         airflow pools set content_mutation 1 "Serialized content publishing"
     environment:
       <<: *airflow-common-env
@@ -121,8 +130,8 @@ services:
       <<: *airflow-common-depends-on
 
 secrets:
-  openrouter_api_key:
-    file: /Users/avery/.secrets/Macclawd/openrouter-api-key
+  codex_gateway_token:
+    file: ${CODEX_GATEWAY_TOKEN_FILE_HOST:-/Users/avery/.secrets/article-pipeline-codex-gateway-token}
 
 volumes:
   postgres-db-volume:

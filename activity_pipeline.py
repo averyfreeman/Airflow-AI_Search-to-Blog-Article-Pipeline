@@ -29,6 +29,7 @@ from typing import Any, Iterator, Literal
 
 import httpx
 from markdownify import markdownify as html_to_markdown
+from prompt_policy import with_tone
 from taxonomy import classify
 
 
@@ -412,8 +413,10 @@ def _vision_description(image_path: Path, base_url: str, timeout: float) -> str:
                         {
                             "type": "text",
                             "text": (
-                                "Describe only information in this image that materially helps a technical article. "
-                                "If it adds no meaningful context, return NOT_USEFUL."
+                                with_tone(
+                                    "Describe only information in this image that materially helps a technical article. "
+                                    "If it adds no meaningful context, return NOT_USEFUL."
+                                )
                             ),
                         },
                         {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{encoded}"}},
@@ -593,7 +596,11 @@ def process_input(
 def discover_archives(inbox: Path) -> list[Path]:
     if not inbox.exists():
         return []
-    return sorted(path for path in inbox.iterdir() if path.is_file() and path.name.lower().endswith(ARCHIVE_SUFFIXES))
+    return sorted(
+        path
+        for path in inbox.rglob("*")
+        if path.is_file() and path.name.lower().endswith(ARCHIVE_SUFFIXES)
+    )
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:

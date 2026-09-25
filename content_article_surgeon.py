@@ -10,10 +10,9 @@ Purpose:
      "Search's response:" while preserving technical content and code blocks.
 
 Designed for:
-  - Python 3.11
-  - macOS / Apple Silicon
-  - llama.cpp server at http://127.0.0.1:11400/v1
-  - OpenRouter chat completions endpoint
+  - Python 3.11+
+  - host Codex app-server or a Docker host gateway
+  - a local OpenAI-compatible fallback at http://127.0.0.1:11400/v1
 
 Recommended first run:
   python3.11 content_article_surgeon.py --source ./content --dry-run
@@ -44,6 +43,9 @@ from bs4 import BeautifulSoup
 from markdownify import markdownify as html_to_markdown
 
 from activity_pipeline import discover_single_model, strip_thought_channels
+from codex_provider import runtime_provider_from_environment
+from privacy_filter import sanitize_for_model
+from prompt_policy import with_tone
 from taxonomy import category_from_text
 
 # =====================================================================
@@ -115,7 +117,7 @@ AMBIGUOUS_TRANSCRIPT_RE = re.compile(
 # DATA STRUCTURES
 # =====================================================================
 
-Provider = Literal["openrouter", "local", "mlx", "none"]
+Provider = Literal["codex", "openrouter", "local", "mlx", "none"]
 
 
 @dataclasses.dataclass
@@ -605,6 +607,19 @@ async def chat_completion(
     if provider == "none":
         raise ValueError("Provider 'none' cannot make chat completions.")
 
+    if provider == "codex":
+        combined = "\n\n".join(str(message.get("content", "")) for message in messages)
+        decision = sanitize_for_model(combined)
+        if decision.blocked:
+            raise RuntimeError("Privacy gate blocked article-surgeon model input")
+        runtime = runtime_provider_from_environment()
+        result = await asyncio.to_thread(
+            runtime.complete,
+            with_tone(decision.text),
+            operation="article-surgeon",
+        )
+        return strip_thought_channels(result.text)
+
     if provider == "openrouter":
         if not config.openrouter_key:
             raise RuntimeError("OPENROUTER_API_KEY is required for OpenRouter calls.")
@@ -674,7 +689,7 @@ async def llm_conversation_audit(
                 end = start + max(20, (end - start) // 2)
                 window = line_numbered_window(lines, start, end)
 
-        system_prompt = (
+        system_prompt = with_tone(
             "You are a conservative Markdown transcript-cleanup auditor. Return JSON only. "
             "Identify line numbers that are pure conversation scaffolding or transcript labels, "
             "such as 'Your prompt:', 'Search response:', 'Assistant:', or duplicate chat export markers. "
@@ -730,7 +745,7 @@ async def llm_detect_topic_splits(
     title = parse_front_matter_title(text) or file_path.stem
     heading_map = build_heading_map(text, config.max_heading_map_chars)
 
-    system_prompt = (
+    system_prompt = with_tone(
         "You are a careful editorial classifier for conversation-derived Markdown articles. "
         "Return JSON only. Your job is to detect whether one Markdown file contains a sharp, "
         "substantial topic divergence where the later section should become a separate article. "
@@ -748,7 +763,6 @@ async def llm_detect_topic_splits(
         '      "line": 35,\n'
         '      "confidence": 0.91,\n'
         '      "new_title": "Running GGUF Models with 64K+ Context",\n'
-        '      "new_category": "AI",\n'
         '      "reasoning": "The article changes from assistant-platform comparison to local model inference."\n'
         "    }\n"
         "  ]\n"
@@ -1018,14 +1032,14 @@ def parse_args(argv: list[str]) -> PipelineConfig:
 
     parser.add_argument(
         "--split-evaluator",
-        choices=["openrouter", "local", "mlx", "none"],
-        default="local",
-        help="Provider used to detect substantial topic divergences; 'mlx' is a compatibility alias for local.",
+        choices=["codex", "openrouter", "local", "mlx", "none"],
+        default="codex",
+        help="Provider used to detect substantial topic divergences; Codex is the default.",
     )
     parser.add_argument(
         "--conversation-auditor",
-        choices=["local", "mlx", "openrouter", "none"],
-        default="local",
+        choices=["codex", "local", "mlx", "openrouter", "none"],
+        default="codex",
         help="Provider used to identify non-obvious conversation fragments.",
     )
     parser.add_argument("--min-split-confidence", type=float, default=0.82, help="Minimum model confidence before applying a split.")

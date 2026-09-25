@@ -1,0 +1,18 @@
+schema_version: 1.0.0
+version: 1
+project_name: Airflow-AI_Search-to-Blog-Article-Pipeline-clean
+problem: Turn manually acquired Google Takeout activity into privacy-gated, evidence-backed educational articles with auditable autonomy.
+languages:
+    - python
+matt:
+    repository: https://github.com/mattpocock/skills.git
+    commit: c55ee46073ed923f86ce59a5eb3b6d895095d1b7
+    path: .agents/mattpocock
+hooks:
+    enabled: true
+    required:
+        - UserPromptSubmit
+        - PreToolUse
+        - PostToolUse
+        - PostCompact
+        - Stop

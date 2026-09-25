@@ -1,0 +1,22 @@
+schema_version: 1.0.0
+version: 1
+profile: guided
+branch: main
+versioning: semver
+initial_tag: v0.1.0
+commit_style: conventional-commits
+semantic_release: false
+actions:
+    init: false
+    branch: false
+    stage: true
+    commit: true
+    tag: true
+    remote: false
+    push: true
+remote:
+    provider: github
+    visibility: private
+    alias: origin
+    url: https://github.com/averyfreeman/Airflow-AI_Search-to-Blog-Article-Pipeline.git
+    status: configured

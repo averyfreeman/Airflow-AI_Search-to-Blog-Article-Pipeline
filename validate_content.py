@@ -25,8 +25,11 @@ def validate_file(path: Path, source_dir: Path) -> list[str]:
         return [f"{path}: missing frontmatter"]
     frontmatter = match.group(1)
     tags = parse_tags(frontmatter)
-    category_match = re.search(r"^Category:\s*[\"']?([^\"'\n]+)", frontmatter, re.M)
-    category_value = category_match.group(1).strip() if category_match else ""
+    category_matches = re.findall(r"^Category:\s*[\"']?([^\"'\n]+)", frontmatter, re.M)
+    category_match = category_matches[0] if category_matches else ""
+    category_value = category_match.strip()
+    if len(category_matches) != 1:
+        errors.append(f"{path}: expected exactly one Category value, found {category_matches!r}")
     if len(tags) != 1:
         errors.append(f"{path}: expected exactly one Tags value, found {tags!r}")
     if not category_value:
@@ -60,8 +63,11 @@ def validate_tree(source_dir: Path) -> dict[str, object]:
             category_match = re.search(r"^Category:\s*[\"']?([^\"'\n]+)", match.group(1), re.M)
             if category_match:
                 counts[category_match.group(1).strip()] += 1
-    if len(counts) > MAX_CATEGORIES:
-        errors.append(f"category count {len(counts)} exceeds hard maximum {MAX_CATEGORIES}")
+    if len(counts) >= MAX_CATEGORIES:
+        errors.append(
+            f"category count {len(counts)} reaches the hard maximum {MAX_CATEGORIES}; "
+            "validation fails before the limit is reached"
+        )
     return {"files": len(files), "category_count": len(counts), "categories": dict(counts), "errors": errors}
 
 

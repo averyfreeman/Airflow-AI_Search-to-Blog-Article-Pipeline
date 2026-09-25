@@ -1,4 +1,21 @@
+# Agent instructions
 
+Read [CONTEXT.md](./CONTEXT.md) for project vocabulary, then consult the
+relevant records under [docs/adr](./docs/adr). Use `git-bbq validate` before
+persisting architecture projections. Git behavior is governed by
+`.githabits.yaml`; raw Takeout remains outside Git under ignored `data/` and
+`inbox/` paths.
+
+
+## Git durability cadence
+
+After each implementation turn that changes project files, run the required
+validation checks, stage the reviewed non-ignored changes, create one
+Conventional Commit, create the next SemVer tag, and push both the branch and
+tag to `origin`. Never stage raw Takeout data, secrets, credentials, generated
+model artifacts, or files excluded by `.gitignore`. This cadence protects
+committed project state; it does not replace the dry-run, checksum, and restore
+requirements for raw-data cleanup.
 
 # Article content operating rules
 

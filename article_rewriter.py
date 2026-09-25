@@ -25,7 +25,10 @@ from activity_pipeline import (
     strip_thought_channels,
     update_frontmatter,
 )
+from codex_provider import PrivacyGateError, ProviderResult, TextProvider, runtime_provider_from_environment
+from privacy_filter import sanitize_for_model
 from public_interest_scorer import DEFAULT_LOCAL_BASE_URL, chunk_markdown
+from prompt_policy import MODEL_ID, with_tone
 from research import research_article
 
 
@@ -123,7 +126,7 @@ class LocalRewriteClient:
                 + ", ".join(required_tokens)
                 + "."
             )
-        system = (
+        system = with_tone(
             "You are a careful technical editor. Rewrite raw conversation-derived Markdown into a coherent "
             "single-author article section written for a real reader. Build a clear problem, context, explanation, "
             "resolution, and takeaway arc; use connected paragraphs and natural transitions rather than fragments. "
@@ -152,6 +155,66 @@ class LocalRewriteClient:
         )
         response.raise_for_status()
         return strip_thought_channels(response.json()["choices"][0]["message"]["content"])
+
+
+class CodexRewriteClient:
+    """Rewrite adapter using Codex app-server or the configured gateway."""
+
+    base_url = "codex://app-server"
+    context = 80_000
+
+    def __init__(self, provider: TextProvider | None = None, *, model: str = MODEL_ID) -> None:
+        self.runtime = provider or runtime_provider_from_environment()
+        self.model = model
+        self.last_result: ProviderResult | None = None
+
+    def chunk_markdown(self, text: str, max_tokens: int) -> list[str]:
+        max_chars = max(12_000, max_tokens * 3)
+        if len(text) <= max_chars:
+            return [text]
+        sections = re.split(r"(?=^#{1,6}\s+)", text, flags=re.M)
+        chunks: list[str] = []
+        current = ""
+        for section in sections:
+            if current and len(current) + len(section) > max_chars:
+                chunks.append(current.strip())
+                current = section
+            else:
+                current += section
+        if current.strip():
+            chunks.append(current.strip())
+        return chunks
+
+    def rewrite(
+        self,
+        chunk: str,
+        brief: dict[str, Any],
+        *,
+        index: int,
+        total: int,
+        required_tokens: list[str] | None = None,
+    ) -> str:
+        token_instruction = ""
+        if required_tokens:
+            token_instruction = (
+                " Preserve every protected placeholder verbatim and in the same relative location. "
+                "Required tokens: " + ", ".join(required_tokens) + "."
+            )
+        prompt = with_tone(
+            "You are a careful technical editor. Rewrite raw conversation-derived Markdown into a coherent "
+            "single-author article section for a real reader. Build a clear problem, context, explanation, "
+            "resolution, and takeaway arc with connected paragraphs and natural transitions. Preserve factual "
+            "uncertainty, commands, code, links, and useful details. Remove speaker labels, prompt scaffolding, "
+            "and chatbot follow-up offers. Use research only as evidence to verify; never invent unsupported facts. "
+            "Return only Markdown for this section.\n\n"
+            f"Global document brief:\n{json.dumps(brief, ensure_ascii=False, indent=2)}\n\n"
+            f"Rewrite section {index} of {total}. Do not add a new top-level title unless one is present.\n\n"
+            f"Source Markdown:\n{chunk}\n"
+            + token_instruction
+        )
+        result = self.runtime.complete(prompt, operation="rewrite")
+        self.last_result = result
+        return strip_thought_channels(result.text)
 
 
 def validate_rewrite(original_body: str, rewritten_body: str, protected: dict[str, str]) -> None:
@@ -186,7 +249,7 @@ def rewrite_file(
     article: Path,
     *,
     source_dir: Path,
-    client: LocalRewriteClient,
+    client: Any,
     dry_run: bool = False,
     max_input_tokens: int = DEFAULT_MAX_INPUT_TOKENS,
     research: bool = False,
@@ -194,11 +257,15 @@ def rewrite_file(
     score_record, score_path = load_score_record(article, source_dir)
     original = article.read_text(encoding="utf-8")
     _, body = split_frontmatter(original)
+    privacy = sanitize_for_model(body)
+    if privacy.blocked:
+        raise PrivacyGateError("Privacy gate blocked rewriting; route the article to editorial review")
+    body = privacy.text
     brief = dict(score_record["brief"])
     research_path: Path | None = None
     if research:
         title = frontmatter_value(original, "Title") or article.stem
-        research_packet = research_article(title, brief)
+        research_packet = research_article(title, brief, provider=getattr(client, "runtime", None))
         brief["external_research"] = research_packet
         digest = hashlib.sha256(original.encode("utf-8")).hexdigest()[:12]
         research_path = source_dir / "_article_pipeline" / "research" / f"{article.stem}.{digest}.research.json"
@@ -206,7 +273,10 @@ def rewrite_file(
             atomic_write(research_path, json.dumps(research_packet, ensure_ascii=False, indent=2) + "\n")
     protected_body, protected = protect_markdown(body)
     safe_limit = min(max_input_tokens, max(8_000, client.context - 20_000))
-    chunks = chunk_markdown(protected_body, client.base_url, max_tokens=safe_limit)
+    if hasattr(client, "chunk_markdown"):
+        chunks = client.chunk_markdown(protected_body, safe_limit)
+    else:
+        chunks = chunk_markdown(protected_body, client.base_url, max_tokens=safe_limit)
     supports_token_inventory = "required_tokens" in inspect.signature(client.rewrite).parameters
     rewritten_chunks = []
     for index, chunk in enumerate(chunks, start=1):
@@ -242,6 +312,10 @@ def rewrite_file(
                 "context_tokens": client.context,
                 "chunks": len(chunks),
                 "research": str(research_path) if research_path else None,
+                "provider": getattr(getattr(client, "last_result", None), "provider", "local"),
+                "fallback_reason": getattr(getattr(client, "last_result", None), "fallback_reason", None),
+                "privacy_override_used": privacy.override_used,
+                "privacy_override_reason": privacy.override_reason,
             },
         )
     return {
@@ -251,6 +325,10 @@ def rewrite_file(
         "context_tokens": client.context,
         "chunks": len(chunks),
         "research": str(research_path) if research_path else None,
+        "provider": getattr(getattr(client, "last_result", None), "provider", "local"),
+        "fallback_reason": getattr(getattr(client, "last_result", None), "fallback_reason", None),
+        "privacy_override_used": privacy.override_used,
+        "privacy_override_reason": privacy.override_reason,
         "dry_run": dry_run,
     }
 
@@ -268,6 +346,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--source", type=Path, default=Path("./staging"))
     parser.add_argument("--article", type=Path, action="append")
     parser.add_argument("--local-base-url", default=DEFAULT_LOCAL_BASE_URL)
+    parser.add_argument("--provider", choices=["codex", "local"], default="codex")
+    parser.add_argument("--model", default=MODEL_ID)
     parser.add_argument("--max-input-tokens", type=int, default=DEFAULT_MAX_INPUT_TOKENS)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--research", action="store_true", help="Gather a bounded external evidence packet before rewriting")
@@ -276,7 +356,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    client = LocalRewriteClient(args.local_base_url)
+    client = CodexRewriteClient(model=args.model) if args.provider == "codex" else LocalRewriteClient(args.local_base_url)
     articles = args.article or list(iter_rewrite_queue(args.source))
     results = [
         rewrite_file(

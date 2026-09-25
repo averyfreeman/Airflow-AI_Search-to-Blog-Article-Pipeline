@@ -12,6 +12,7 @@ __pycache__/
 !.env.example
 
 # Raw Takeout inputs, extracted data, staging runs, and local backups
+/data/
 /inbox/
 /downloads/
 /takeout/
@@ -23,14 +24,15 @@ __pycache__/
 /*.tar.gz
 /*.zip
 
-# Published articles live in the separate private article repository. Keep the
-# publication mount and all generated article output out of this public repo.
-/articles/
+# Published articles and their editorial sidecars are private project data.
 /articles/_article_pipeline/
 /articles/drafts/
 /articles/inbox/
 /articles/**/*.tmp
 /articles/article_surgeon_progress_tree.md
+
+# Host-side Codex gateway secret
+/.codex-gateway-token
 
 # Local Airflow state
 /airflow/logs/*

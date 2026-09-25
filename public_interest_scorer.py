@@ -2,8 +2,10 @@
 """Digest and score Markdown articles for public-interest/article potential.
 
 Long inputs are summarized into a single global document brief before the
-OpenRouter classifier assigns rubric dimensions. Chunk scores are never
-averaged; Python computes the final weighted score deterministically.
+Codex-backed classifier assigns rubric dimensions. Chunk scores are never
+averaged; Python computes the final weighted score deterministically. A legacy
+OpenRouter adapter remains available only for compatibility with old tests and
+manual migrations.
 """
 
 from __future__ import annotations
@@ -31,6 +33,9 @@ from activity_pipeline import (
     strip_thought_channels,
     update_frontmatter,
 )
+from codex_provider import ProviderResult, TextProvider, runtime_provider_from_environment
+from privacy_filter import findings_as_dicts, sanitize_for_model, sanitize_text
+from prompt_policy import MODEL_ID, with_tone
 
 
 RUBRIC_VERSION = "public-interest-v1"
@@ -123,6 +128,12 @@ class ScoreResult:
     actual_model: str
     provider: str
     scored_at: str
+    fallback_reason: str | None = None
+    run_id: str | None = None
+    reasoning_effort: str | None = None
+    prompt_sha256: str | None = None
+    output_sha256: str | None = None
+    citations: tuple[dict[str, str], ...] = ()
 
 
 def utc_now() -> str:
@@ -324,6 +335,25 @@ def _chat_json(
     return extract_json_object(response.json()["choices"][0]["message"]["content"])
 
 
+def _approximate_chunks(text: str, max_chars: int = 60_000) -> list[str]:
+    """Chunk Codex input without probing a local tokenizer endpoint."""
+
+    if len(text) <= max_chars:
+        return [text]
+    sections = re.split(r"(?=^#{1,6}\s+)", text, flags=re.M)
+    chunks: list[str] = []
+    current = ""
+    for section in sections:
+        if current and len(current) + len(section) > max_chars:
+            chunks.append(current.strip())
+            current = section
+        else:
+            current += section
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
+
+
 def build_document_brief(
     text: str,
     *,
@@ -331,11 +361,12 @@ def build_document_brief(
     timeout: float = 240.0,
     model: str | None = None,
     chat_json: Callable[..., dict[str, Any]] = _chat_json,
+    provider: TextProvider | None = None,
 ) -> dict[str, Any]:
-    local_model = model or discover_single_model(local_base_url)
+    local_model = model or (provider.model if provider is not None else discover_single_model(local_base_url))
     _, body = split_frontmatter(text)
-    chunks = chunk_markdown(body, local_base_url)
-    system = (
+    chunks = _approximate_chunks(body) if provider is not None else chunk_markdown(body, local_base_url)
+    system = with_tone(
         "Create a factual editorial brief for a conversation-derived article. Do not score it. "
         "Capture the complete problem-to-resolution arc, including useful failed attempts, reusable lessons, "
         "facts/code worth preserving, missing context that external research should verify, uncertainty, and privacy risks. "
@@ -345,30 +376,52 @@ def build_document_brief(
     )
     partials: list[dict[str, Any]] = []
     for index, chunk in enumerate(chunks, start=1):
-        partials.append(
-            normalize_document_brief(chat_json(
+        user = f"Document section {index} of {len(chunks)}:\n\n{chunk}"
+        if provider is not None:
+            result = provider.complete(
+                f"{system}\n\n{user}",
+                schema=BRIEF_SCHEMA,
+                operation="brief",
+            )
+            raw_brief = extract_json_object(result.text)
+        else:
+            raw_brief = chat_json(
                 local_base_url,
                 local_model,
                 system,
-                f"Document section {index} of {len(chunks)}:\n\n{chunk}",
+                user,
                 BRIEF_SCHEMA,
                 timeout=timeout,
                 max_tokens=1200,
-            ), source_text=text)
+            )
+        partials.append(
+            normalize_document_brief(raw_brief, source_text=text)
         )
     if len(partials) == 1:
         return partials[0]
-    return normalize_document_brief(
-        chat_json(
+    merge_user = (
+        "Merge these partial briefs into one coherent document-level brief. Do not omit a late resolution "
+        "because earlier sections contain false starts.\n\n" + json.dumps(partials, ensure_ascii=False, indent=2)
+    )
+    if provider is not None:
+        merged = provider.complete(
+            f"{system}\n\n{merge_user}",
+            schema=BRIEF_SCHEMA,
+            operation="brief-merge",
+        )
+        merged_value = extract_json_object(merged.text)
+    else:
+        merged_value = chat_json(
             local_base_url,
             local_model,
             system,
-            "Merge these partial briefs into one coherent document-level brief. Do not omit a late resolution "
-            "because earlier sections contain false starts.\n\n" + json.dumps(partials, ensure_ascii=False, indent=2),
+            merge_user,
             BRIEF_SCHEMA,
             timeout=timeout,
             max_tokens=1600,
-        ),
+        )
+    return normalize_document_brief(
+        merged_value,
         source_text=text,
     )
 
@@ -396,7 +449,7 @@ class OpenRouterScoringClient:
         self.retries = retries
 
     def score(self, brief: dict[str, Any], excerpts: str) -> tuple[dict[str, Any], str, str]:
-        system = (
+        system = with_tone(
             "You are a conservative editorial opportunity classifier. Score the article concept, not its current "
             "chatty formatting. A messy troubleshooting transcript can have high salvageability and article potential "
             "when it contains a real resolution and reusable lessons. Scores above 0.8 require exceptional, source-"
@@ -452,11 +505,60 @@ class OpenRouterScoringClient:
         raise RuntimeError(f"OpenRouter scoring failed after {self.retries} attempts: {last_error}")
 
 
+class CodexScoringClient:
+    """Scoring adapter backed by Codex app-server or the Docker gateway."""
+
+    def __init__(self, provider: TextProvider | None = None, *, model: str = MODEL_ID) -> None:
+        self.runtime = provider or runtime_provider_from_environment()
+        self.provider = ProviderConfig("codex://app-server", model)
+        self.last_result: ProviderResult | None = None
+
+    def build_brief(self, text: str, *, timeout: float = 240.0) -> dict[str, Any]:
+        decision = sanitize_for_model(text)
+        if decision.blocked:
+            brief = normalize_document_brief({}, source_text=decision.text)
+            brief["privacy_risks"] = [f"Privacy filter finding: {item.kind}" for item in decision.findings]
+            brief["uncertainties"] = ["Privacy gate blocked model processing; editorial review is required."]
+            return brief
+        return build_document_brief(
+            decision.text,
+            local_base_url=DEFAULT_LOCAL_BASE_URL,
+            timeout=timeout,
+            model=self.provider.model,
+            provider=self.runtime,
+        )
+
+    def score(self, brief: dict[str, Any], excerpts: str) -> tuple[dict[str, Any], str, str]:
+        system = with_tone(
+            "You are a conservative editorial opportunity classifier. Score the article concept, not its current "
+            "chatty formatting. A messy troubleshooting transcript can have high salvageability and article potential "
+            "when it contains a real resolution and reusable lessons. Scores above 0.8 require exceptional, source-"
+            "supported depth; 0.5 means useful but ordinary; 0 means no recoverable public value. Privacy risk means "
+            "private source data, not discussion of cybersecurity. Return only schema-valid JSON."
+        )
+        user = (
+            "Use these dimensions independently:\n"
+            "- public_interest_score: relevance to readers beyond the original author\n"
+            "- technical_value_score: concrete, accurate, reusable practical depth\n"
+            "- article_potential_score: strength of the angle and problem-to-resolution arc\n"
+            "- salvageability_score: value recoverable through editing despite transcript messiness\n\n"
+            f"Global document brief:\n{json.dumps(brief, ensure_ascii=False, indent=2)}\n\n"
+            f"Representative source excerpts:\n{excerpts}"
+        )
+        result = self.runtime.complete(
+            f"{system}\n\n{user}",
+            schema=SCORE_SCHEMA,
+            operation="score",
+        )
+        self.last_result = result
+        return extract_json_object(result.text), result.actual_model, result.provider
+
+
 def score_text(
     text: str,
     *,
     brief: dict[str, Any],
-    client: OpenRouterScoringClient,
+    client: Any,
 ) -> ScoreResult:
     raw, actual_model, provider = client.score(brief, representative_excerpts(text))
     dimensions = {name: clamp_score(raw[name]) for name in SCORE_WEIGHTS}
@@ -477,6 +579,7 @@ def score_text(
         "editorial verification is required" in str(item).lower()
         for item in brief.get("uncertainties", [])
     )
+    provider_result = getattr(client, "last_result", None)
     return ScoreResult(
         score=score,
         disposition=route_disposition(score, privacy_risk=privacy_risk, material_uncertainty=material_uncertainty),
@@ -491,6 +594,12 @@ def score_text(
         actual_model=actual_model,
         provider=provider,
         scored_at=utc_now(),
+        fallback_reason=getattr(provider_result, "fallback_reason", None),
+        run_id=getattr(provider_result, "run_id", None),
+        reasoning_effort=getattr(provider_result, "reasoning_effort", None),
+        prompt_sha256=getattr(provider_result, "prompt_sha256", None),
+        output_sha256=getattr(provider_result, "output_sha256", None),
+        citations=getattr(provider_result, "citations", ()),
     )
 
 
@@ -512,22 +621,17 @@ def requires_model_scoring(text: str) -> bool:
 
 def obvious_privacy_risk(text: str) -> bool:
     """Conservatively identify common private identifiers without an external call."""
-
-    patterns = (
-        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
-        r"\b(?:\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}\b",
-        r"\b\d{3}-\d{2}-\d{4}\b",
-        r"\b(?:sk-[A-Za-z0-9_-]{16,}|api[_ -]?key\s*[:=])",
-    )
-    return any(re.search(pattern, text, re.I) for pattern in patterns)
+    return sanitize_text(text).risk
 
 
 def deterministic_score(
     text: str,
     *,
     reason: str = "Insufficient source evidence for model scoring.",
+    privacy_risk: bool | None = None,
+    brief_text: str | None = None,
 ) -> ScoreResult:
-    brief = normalize_document_brief({}, source_text=text)
+    brief = normalize_document_brief({}, source_text=brief_text or text)
     brief["uncertainties"] = [reason]
     dimensions = {
         "public_interest_score": 0.12,
@@ -536,7 +640,7 @@ def deterministic_score(
         "salvageability_score": 0.18,
     }
     score = weighted_score(dimensions)
-    privacy_risk = obvious_privacy_risk(text)
+    privacy_risk = obvious_privacy_risk(text) if privacy_risk is None else privacy_risk
     return ScoreResult(
         score=score,
         disposition=route_disposition(score, privacy_risk=privacy_risk),
@@ -583,7 +687,7 @@ def score_file(
     article: Path,
     *,
     source_dir: Path,
-    client: OpenRouterScoringClient | None,
+    client: Any,
     local_base_url: str = DEFAULT_LOCAL_BASE_URL,
     dry_run: bool = False,
     brief: dict[str, Any] | None = None,
@@ -591,18 +695,43 @@ def score_file(
     deterministic_reason: str | None = None,
 ) -> tuple[ScoreResult, Path]:
     text = article.read_text(encoding="utf-8")
+    privacy = sanitize_for_model(text)
     if deterministic_reason or not requires_model_scoring(text):
-        result = deterministic_score(text, reason=deterministic_reason or "Insufficient source evidence for model scoring.")
+        result = deterministic_score(
+            text,
+            reason=deterministic_reason or "Insufficient source evidence for model scoring.",
+            privacy_risk=privacy.risk or None,
+            brief_text=privacy.text if privacy.risk else None,
+        )
+    elif privacy.blocked:
+        result = deterministic_score(
+            privacy.text,
+            reason="Privacy gate blocked model processing; editorial review is required.",
+            privacy_risk=True,
+            brief_text=privacy.text,
+        )
     else:
         if client is None:
-            raise ValueError("An OpenRouter client is required for model-scored content")
-        brief = brief or brief_builder(text, local_base_url=local_base_url)
-        result = score_text(text, brief=brief, client=client)
+            raise ValueError("A model scoring client is required for model-scored content")
+        safe_text = privacy.text
+        if brief is None:
+            if hasattr(client, "build_brief"):
+                brief = client.build_brief(safe_text)
+            else:
+                brief = brief_builder(safe_text, local_base_url=local_base_url)
+        if privacy.findings:
+            existing = list(brief.get("privacy_risks", []))
+            existing.extend(f"Privacy filter finding: {item.kind}" for item in privacy.findings)
+            brief["privacy_risks"] = list(dict.fromkeys(existing))
+        result = score_text(safe_text, brief=brief, client=client)
     record_path = score_record_path(article, source_dir)
     backup_path = source_dir / "_article_pipeline" / "backups" / "dry-run"
     record = {
         "article": str(article.resolve()),
         "source_record_id": frontmatter_value(text, "Source_Record_ID"),
+        "privacy_findings": findings_as_dicts(privacy),
+        "privacy_override_used": privacy.override_used,
+        "privacy_override_reason": privacy.override_reason,
         **result.__dict__,
     }
     if not dry_run:
@@ -640,6 +769,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--source", type=Path, default=Path("./staging"))
     parser.add_argument("--article", type=Path, action="append")
+    parser.add_argument("--provider", choices=["codex", "openrouter"], default="codex")
+    parser.add_argument("--model", default=MODEL_ID)
     parser.add_argument("--opencode-config", type=Path, default=DEFAULT_CONFIG_PATH)
     parser.add_argument("--key-file", type=Path)
     parser.add_argument("--local-base-url", default=DEFAULT_LOCAL_BASE_URL)
@@ -650,8 +781,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
-    provider = load_provider_config(args.opencode_config)
-    client = OpenRouterScoringClient(provider, load_api_key(args.key_file))
+    if args.provider == "openrouter":
+        provider = load_provider_config(args.opencode_config)
+        client = OpenRouterScoringClient(provider, load_api_key(args.key_file))
+    else:
+        client = CodexScoringClient(model=args.model)
     articles = args.article or list(iter_markdown(args.source, recursive=not args.no_recursive))
     summaries: list[dict[str, Any]] = []
     for article in articles:

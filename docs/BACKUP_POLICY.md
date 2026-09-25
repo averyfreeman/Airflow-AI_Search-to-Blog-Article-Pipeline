@@ -7,6 +7,11 @@ the current short-lived staging window. Do not keep raw Takeout exports,
 extracted attachments, PDFs, images, audio, or full model transcripts in the
 publication tree.
 
+The working `data/` tree and ignored `inbox/` are source-processing locations,
+not publication inputs to commit. `takeout_intake.py` records SHA-256 values
+when files are staged. The host-side Codex gateway must not log prompts or
+model output; retain only provider metadata and hashes in pipeline ledgers.
+
 ## External storage
 
 Set `ARTICLE_BACKUP_ROOT` to an encrypted external backup location. A backup
@@ -28,6 +33,9 @@ retention class, and external snapshot identifier.
 - Keep published-version backups until the corresponding article is retired.
 - Delete local staging artifacts after 30 days, only after checksum verification.
 
-Cleanup must support `--dry-run`, accept explicit roots, refuse to target
-`articles/`, and write a JSONL deletion report. Test a restore at least once per
-quarter and after taxonomy migrations.
+Cleanup defaults to a dry run, accepts an explicit staging root, refuses
+`articles/`, `data/`, `inbox/`, repository, home, and filesystem roots, and
+writes a JSONL checksum report. Applying cleanup requires an external
+`--backup-root`; each candidate is copied and rechecked before removal so the
+report contains a restore path. Test a restore at least once per quarter and
+after taxonomy migrations.

@@ -19,11 +19,17 @@ PROJECT_ROOT = Path(os.environ.get("ARTICLE_PIPELINE_ROOT", "/workspace/content"
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 INBOX = Path(os.environ.get("TAKEOUT_INBOX", str(PROJECT_ROOT / "inbox")))
+TAKEOUT_SOURCE = Path(os.environ.get("TAKEOUT_SOURCE", str(PROJECT_ROOT / "data")))
 RUNS = Path(os.environ.get("ARTICLE_PIPELINE_RUNS", str(PROJECT_ROOT / "staging")))
 PUBLISHED = Path(os.environ.get("ARTICLE_PUBLISH_DIR", str(PROJECT_ROOT / "articles")))
 LOCAL_BASE_URL = os.environ.get("LOCAL_LLM_BASE_URL", "http://host.docker.internal:11400/v1")
+CODEX_RUNTIME = os.environ.get("CODEX_RUNTIME", "gateway")
+CODEX_GATEWAY_URL = os.environ.get("CODEX_GATEWAY_URL", "http://host.docker.internal:8787")
+CODEX_GATEWAY_TOKEN_FILE = os.environ.get("CODEX_GATEWAY_TOKEN_FILE", "/run/secrets/codex_gateway_token")
 DRY_RUN = os.environ.get("ARTICLE_PIPELINE_DRY_RUN", "false").lower() in {"1", "true", "yes"}
 MAX_MODEL_ARTICLES = max(1, int(os.environ.get("ARTICLE_PIPELINE_MAX_MODEL_ARTICLES", "100")))
+DEFAULT_SELECTION = os.environ.get("ARTICLE_PIPELINE_SELECTION", "N")
+DEFAULT_PILOT_N = max(1, int(os.environ.get("ARTICLE_PIPELINE_PILOT_N", "10")))
 STATE_ROOT = Path(os.environ.get("ARTICLE_PIPELINE_STATE", str(PROJECT_ROOT / "_article_pipeline_state")))
 COMPLETED_RECORDS = STATE_ROOT / "completed_records.jsonl"
 
@@ -81,13 +87,27 @@ def _model_batch_limit(conf: dict[str, Any] | None = None) -> int:
     return max(1, min(requested, MAX_MODEL_ARTICLES))
 
 
+def _selection_limit(total: int, conf: dict[str, Any] | None = None) -> tuple[int, str]:
+    settings = conf or {}
+    mode = str(settings.get("selection", DEFAULT_SELECTION)).strip().lower()
+    if mode == "all":
+        return total, "ALL"
+    if mode == "half":
+        return max(1, (total + 1) // 2), "HALF"
+    try:
+        requested = int(settings.get("pilot_n", DEFAULT_PILOT_N))
+    except (TypeError, ValueError):
+        requested = DEFAULT_PILOT_N
+    return max(1, min(requested, total)), "N"
+
+
 @dag(
     dag_id="google_takeout_articles",
     schedule="0 3 * * *",
     start_date=pendulum.datetime(2026, 8, 5, tz="America/Los_Angeles"),
     catchup=False,
     max_active_runs=1,
-    tags=["google-takeout", "articles", "local-llm"],
+    tags=["google-takeout", "articles", "codex"],
     default_args={"owner": "avery", "retries": 1, "retry_delay": timedelta(minutes=2)},
 )
 def google_takeout_articles() -> None:
@@ -101,22 +121,41 @@ def google_takeout_articles() -> None:
         return str(root)
 
     @task
-    def discover_archives() -> list[str]:
-        from activity_pipeline import discover_archives as discover
+    def stage_takeout() -> str:
+        from takeout_intake import copy_takeout_tree
 
         INBOX.mkdir(parents=True, exist_ok=True)
-        return [str(path) for path in discover(INBOX)]
+        auto_copy = os.environ.get("TAKEOUT_AUTO_COPY", "false").lower() in {"1", "true", "yes"}
+        if auto_copy and TAKEOUT_SOURCE.exists() and TAKEOUT_SOURCE.resolve() != INBOX.resolve():
+            copy_takeout_tree(TAKEOUT_SOURCE, INBOX, dry_run=DRY_RUN)
+        return str(INBOX)
 
     @task
-    def validate_and_safely_extract(archive: str, run_root: str) -> dict[str, str]:
+    def discover_inputs(inbox_root: str) -> list[str]:
+        from activity_pipeline import discover_activity_jsons, discover_archives
+
+        inbox = Path(inbox_root)
+        archives = discover_archives(inbox)
+        if archives:
+            return [str(path) for path in archives]
+        return [str(inbox)] if discover_activity_jsons(inbox) else []
+
+    @task
+    def validate_and_safely_extract(input_path: str, run_root: str) -> dict[str, str]:
         from activity_pipeline import extract_archive, validate_archive
 
-        validation = validate_archive(Path(archive))
-        destination = Path(run_root) / "extracted" / validation.sha256[:16]
-        extract_archive(validation, destination)
+        candidate = Path(input_path)
+        if candidate.is_file() and candidate.name.lower().endswith((".zip", ".tar", ".tar.gz", ".tgz")):
+            validation = validate_archive(candidate)
+            destination = Path(run_root) / "extracted" / validation.sha256[:16]
+            extract_archive(validation, destination)
+            archive_sha256 = validation.sha256
+        else:
+            destination = candidate
+            archive_sha256 = ""
         return {
-            "archive": str(validation.path),
-            "archive_sha256": validation.sha256,
+            "archive": str(candidate),
+            "archive_sha256": archive_sha256,
             "extracted": str(destination),
         }
 
@@ -138,7 +177,7 @@ def google_takeout_articles() -> None:
 
         article_dir = Path(run_root) / "articles"
         dag_run = get_current_context().get("dag_run")
-        model_batch_limit = _model_batch_limit(getattr(dag_run, "conf", None))
+        conf = getattr(dag_run, "conf", None) or {}
         completed_ids, completed_hashes = _completed_state()
         pending: list[tuple[str, Path, str, str]] = []
         deterministic_count = 0
@@ -203,7 +242,9 @@ def google_takeout_articles() -> None:
                 seen_hashes.add(content_hash)
             unique_pending.append(article)
 
-        selected = unique_pending[:model_batch_limit]
+        limit, selection_mode = _selection_limit(len(unique_pending), conf)
+        limit = min(limit, _model_batch_limit(conf))
+        selected = unique_pending[:limit]
         append_jsonl(
             Path(run_root) / "_article_pipeline" / "candidate_selection.jsonl",
             {
@@ -213,12 +254,13 @@ def google_takeout_articles() -> None:
                 "duplicates": duplicate_count,
                 "model_selected": len(selected),
                 "deferred": max(0, len(unique_pending) - len(selected)),
-                "model_batch_limit": model_batch_limit,
+                "model_batch_limit": limit,
+                "selection": selection_mode,
             },
         )
         return [str(path) for path in selected]
 
-    @task(pool="local_llama", pool_slots=2, execution_timeout=timedelta(hours=4))
+    @task(pool="codex", pool_slots=2, execution_timeout=timedelta(hours=4))
     def clean_and_split_articles(candidates: list[str], run_root: str) -> list[str]:
         article_dir = Path(run_root) / "articles"
         if not candidates:
@@ -233,9 +275,9 @@ def google_takeout_articles() -> None:
             "--local-model",
             "auto",
             "--split-evaluator",
-            "local",
+            "codex",
             "--conversation-auditor",
-            "local",
+            "codex",
             "--local-concurrency",
             "2",
             "--file-concurrency",
@@ -260,18 +302,18 @@ def google_takeout_articles() -> None:
             )
         ]
 
-    @task(pool="local_llama", execution_timeout=timedelta(minutes=45))
+    @task(pool="codex", execution_timeout=timedelta(minutes=45))
     def build_global_brief(article: str) -> dict[str, Any]:
-        from public_interest_scorer import build_document_brief
+        from public_interest_scorer import CodexScoringClient
 
         text = Path(article).read_text(encoding="utf-8")
         return {
             "article": article,
-            "brief": build_document_brief(text, local_base_url=LOCAL_BASE_URL),
+            "brief": CodexScoringClient().build_brief(text),
         }
 
     @task(
-        pool="openrouter",
+        pool="codex",
         retries=4,
         retry_delay=timedelta(seconds=30),
         retry_exponential_backoff=True,
@@ -279,15 +321,9 @@ def google_takeout_articles() -> None:
         execution_timeout=timedelta(minutes=30),
     )
     def score_public_interest(item: dict[str, Any], run_root: str) -> dict[str, Any]:
-        from public_interest_scorer import (
-            OpenRouterScoringClient,
-            load_api_key,
-            load_provider_config,
-            score_file,
-        )
+        from public_interest_scorer import CodexScoringClient, score_file
 
-        provider = load_provider_config(PROJECT_ROOT / "opencode.json")
-        client = OpenRouterScoringClient(provider, load_api_key())
+        client = CodexScoringClient()
         result, record = score_file(
             Path(item["article"]),
             source_dir=Path(run_root) / "articles",
@@ -300,6 +336,10 @@ def google_takeout_articles() -> None:
             "score": result.score,
             "disposition": result.disposition,
             "score_record": str(record),
+            "requested_model": result.requested_model,
+            "actual_model": result.actual_model,
+            "provider": result.provider,
+            "fallback_reason": result.fallback_reason,
         }
 
     @task.branch
@@ -308,17 +348,17 @@ def google_takeout_articles() -> None:
         selected = [f"{name}_article" for name in ("rewrite", "review", "reject") if name in dispositions]
         return selected or None
 
-    @task(pool="local_llama", execution_timeout=timedelta(hours=2))
+    @task(pool="codex", execution_timeout=timedelta(hours=2))
     def rewrite_article(item: dict[str, Any], run_root: str) -> dict[str, Any]:
         from airflow.sdk.exceptions import AirflowSkipException
-        from article_rewriter import LocalRewriteClient, rewrite_file
+        from article_rewriter import CodexRewriteClient, rewrite_file
 
         if item["disposition"] != "rewrite":
             raise AirflowSkipException("Article is not routed to rewrite")
         result = rewrite_file(
             Path(item["article"]),
             source_dir=Path(run_root) / "articles",
-            client=LocalRewriteClient(LOCAL_BASE_URL),
+            client=CodexRewriteClient(),
             research=True,
         )
         return {**item, **result}
@@ -406,8 +446,9 @@ def google_takeout_articles() -> None:
         return str(destination)
 
     run_root = initialize_run()
-    archives = discover_archives()
-    extracted = validate_and_safely_extract.partial(run_root=run_root).expand(archive=archives)
+    inbox_root = stage_takeout()
+    inputs = discover_inputs(inbox_root)
+    extracted = validate_and_safely_extract.partial(run_root=run_root).expand(input_path=inputs)
     normalized = normalize_activity_records.partial(run_root=run_root).expand(extraction=extracted)
     candidates = select_model_candidates(normalized, run_root)
     cleaned = clean_and_split_articles(candidates, run_root)

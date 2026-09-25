@@ -1,0 +1,12 @@
+schema_version: 1.0.0
+revision: 1
+scope: Airflow-AI_Search-to-Blog-Article-Pipeline-clean
+problem: Turn manually acquired Google Takeout activity into privacy-gated, evidence-backed educational articles with auditable autonomy.
+languages:
+    - python
+adr_files:
+    - docs/adr/0001-codex-authenticated-model-provider.md
+    - docs/adr/0002-dual-airflow-runtime.md
+    - docs/adr/0003-privacy-gated-takeout-intake.md
+    - docs/adr/0004-evidence-and-research.md
+    - docs/adr/0005-publication-boundary.md

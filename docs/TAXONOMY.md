@@ -20,6 +20,7 @@ AI Mode, or another Takeout product. It is provenance, not taxonomy. Specific
 technologies and concepts stay in the article title/body and must not become
 new folders.
 
-The target is 23 categories and the hard maximum is 30. Any new category must
+The target is 23 categories and the hard maximum is 30; validation fails when
+the count reaches 30 so there is always room for review. Any new category must
 be justified as a durable reader-facing domain, added to the allowlist, tested,
 and reviewed before publication.

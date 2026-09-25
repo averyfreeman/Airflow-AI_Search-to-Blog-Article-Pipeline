@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "files": {
+    ".agents/mattpocock/DEPENDENCY.yaml": "70e8e46dbb5313b0295f768dce893a8c0d8f0c810ba0a524bafdf370f8b0fb8c",
+    ".gitbbq-manifest.yaml": "783e79ac950e92c718d1633d2eb18f98f965836f8014f9ffa71eebc6c6fe631a",
+    ".gitbbq/.gitignore": "bea45574d15b3fc3d5218fd2dad6e66bdb9fba6b57867ede863383ec55219ebe",
+    ".gitbbq/hooks.json": "602df880af8a1daa40beb0b19586bf3c2423c6db52c825316218be8ef5059f17",
+    ".gitbbq/session.json": "b62dbebc11030535796fe0f5b3c3f6f1304d36d46ae0ede80344f57b115265b7",
+    ".githabits.yaml": "edf6f0acecb283dbe09fa297641bb0d3d6c893732450bbf89f2d2dd4b3238966",
+    "AGENTS.md": "699aa4e5e71bf4a50f7f37aae9ef3fdfaf52ec0a827b3cea494d260dc353a101",
+    "architecture-contract.yaml": "952b42fb7e9c24dae09071c9062a168ab2929c836b610277d034c5e7b85028e5",
+    "docs/adr/index.json": "2716b2d21c318191fd247f1684b89756612e0a2943015be45009fb87d0d55697",
+    "implementation-plan.md": "2370d6756e3c0e01a650e3a7d100b755db4dbf037634b3d30a526dcce1d4454d"
+  }
+}
