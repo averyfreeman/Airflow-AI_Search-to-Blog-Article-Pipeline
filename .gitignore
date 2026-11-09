@@ -41,3 +41,13 @@ __pycache__/
 !/airflow/config/.gitkeep
 /airflow/plugins/*
 !/airflow/plugins/.gitkeep
+
+# Local credentials and generated development files
+.DS_Store
+node_modules/
+.build/
+.uv-cache/
+.gocache/
+.next/
+.gradle/
+.env*
